@@ -1,0 +1,332 @@
+---
+title: "Final Project"
+author: "Chipo"
+date: "4/4/25"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r}
+#========================================== Morocco Power Consumption Data Analysis =============
+
+#### 1. SETUP AND DATA LOADING
+
+# Set working directory
+setwd("~/GW/Time Series/Final Project")
+
+# install and load libraries
+install.packages("dplyr")
+install.packages("ggplot2")
+install.packages("forecast")
+
+library(dplyr)
+library(ggplot2)
+library(forecast)
+
+# load the data
+power <- read.csv("PowerConsumption.csv", header=TRUE)
+attach(power)
+head(power)
+
+# summary statistics
+summary(power)
+
+```
+
+
+```{r}
+
+# Convert DateTime to POSIXct
+power$DateTime <- as.POSIXct(power$DateTime, format="%m/%d/%Y %H:%M")
+
+# Extract time components using base R
+power$Hour <- as.numeric(format(power$DateTime, "%H"))
+power$Weekday <- weekdays(power$DateTime)
+power$Weekday <- factor(power$Weekday, 
+                       levels=c("Monday","Tuesday","Wednesday",
+                                "Thursday","Friday","Saturday","Sunday"))
+power$Month <- format(power$DateTime, "%B")
+power$Month <- factor(power$Month,
+                     levels=c("January","February","March",
+                              "April","May","June","July",
+                              "August","September","October",
+                              "November","December")) 
+
+power
+
+```
+
+```{r}
+# Add to your introduction section
+summary_stats <- summary(power)
+cat("Power consumption ranges from", min(power$Total), "to", max(power$Total), "units\n")
+cat("Temperature ranges from", min(power$Temperature), "to", max(power$Temperature), "degrees\n")
+
+# Correlation analysis
+cor_matrix <- cor(power[,c("Total","Temperature","Humidity","Wind.Speed")])
+print(cor_matrix)
+```
+
+```{r}
+# Create a time series object
+POWER <- ts(power$Total, start=2017, frequency=24)
+
+# Plot time series
+ts.plot(POWER, col = "blue", main = "Power Consumption Over Time")
+
+```
+
+```{r}
+
+# Bow plots by Hourly, Daily and Monthly Seasonality
+boxplot(Total ~ Month, data=power, col="lightblue", main="Monthly Patterns")
+boxplot(Total ~ Weekday, data=power, col="lightblue", main="Weekly Patterns")
+boxplot(Total ~ Hour, data=power, col="lightblue", main="Hourly Patterns")
+
+
+
+```
+```{r}
+par(mfrow=c(1,2))
+# Nonstationarity of the Original Series
+# ACF Analysis:
+acf(POWER, main="ACF of Original Series")
+# ACF Analysis:
+pacf(POWER, main="PACF of Original Series")
+
+```
+```{r}
+# Function to plot standardized comparison
+plot_standardized_comparison <- function(y_var, x_var, x_name) {
+  plot(scale(power[[y_var]]), type="l", col="blue", 
+       main=paste("Standardized", y_var, "and", x_name),
+       ylab="Standardized Values", xlab="Time (hours)")
+  lines(scale(power[[x_var]]), col="red")
+  legend("topright", legend=c(y_var, x_name), 
+         col=c("blue", "red"), lty=1)
+}
+
+# Usage and other regressor factors
+
+# Temperature
+plot(scale(power$Total), type="l", col="blue", 
+     main="Standardized Total Consumption and Temperature",
+     ylab="Standardized Values")
+lines(scale(power$Temperature), col="red")
+legend("topright", legend=c("Consumption", "Temperature"), 
+       col=c("blue", "red"), lty=1)
+
+
+# Humidity
+plot(scale(power$Total), type="l", col="blue", 
+     main="Standardized Total Consumption and Humidity",
+     ylab="Standardized Values")
+lines(scale(power$Humidity), col="red")
+legend("topright", legend=c("Consumption", "Humidity"), 
+       col=c("blue", "red"), lty=1)
+
+
+# Wind Speed
+plot(scale(power$Total), type="l", col="blue", 
+     main="Standardized Total Consumption and Wind Speed",
+     ylab="Standardized Values")
+lines(scale(power$Wind.Speed), col="red")
+legend("topright", legend=c("Consumption", "Wind Speed"), 
+       col=c("blue", "red"), lty=1)
+
+# Diffuse Flows
+plot(scale(power$Total), type="l", col="blue", 
+     main="Standardized Total Consumption and Diffuse Flows",
+     ylab="Standardized Values")
+lines(scale(power$diffuse.flows), col="red")
+legend("topright", legend=c("Consumption", "Diffuse Flows"), 
+       col=c("blue", "red"), lty=1)
+
+
+
+```
+
+
+```{r}
+
+# Enhanced periodogram analysis
+spec <- spectrum(power$Total, spans=c(3,3), main="Periodogram")
+top_freq <- data.frame(Freq=spec$freq[order(-spec$spec)][1:20],
+                      Spec=spec$spec[order(-spec$spec)][1:20])
+top_freq$Period <- 1/top_freq$Freq
+print(top_freq)
+
+```
+
+
+
+```{r}
+
+## Seasonal Model
+fit_seasonal <- lm(Total ~ as.factor(Hour) + as.factor(Month) , data=train)
+summary(fit_seasonal)
+
+```
+```{r}
+
+# Seasonal + Trend model
+time <- 1:nrow(train)
+fit_trend <- lm(Total ~ time +  as.factor(Hour) + as.factor(Month), data=train)
+summary(fit_trend)
+
+```
+
+
+```{r}
+
+# Log-transformed model
+fit_log <- lm(log(Total) ~ time + as.factor(Hour) + as.factor(Month) , data=train)
+summary(fit_log)
+
+```
+
+```{r}
+
+## Harmonic model
+
+# Create time series object with proper frequency (24 for hourly data)
+ts_data <- ts(train$Total, frequency=24)
+
+# Generate Fourier terms (harmonic regressors)
+harmonics <- fourier(ts_data, K=6)
+
+# Fit harmonic model
+fit_harmonic <- lm(Total ~ time + harmonics, data=train)
+summary(fit_harmonic)
+
+```
+
+```{r}
+
+# Holt-Winters Exponential Smoothing (Improved)
+# Fit HW model
+hw_model <- HoltWinters(ts(train$Total, frequency=24))
+hw_model
+
+```
+
+```{r}
+
+# Residual Analysis
+# Function to perform and plot residual analysis
+residual_analysis <- function(model, model_name) {
+
+  # 1. Residuals vs Fitted
+  if(class(model) == "lm") {
+    plot(fitted(model), residuals(model),
+         main=paste(model_name, "Residuals vs Fitted"),
+         xlab="Fitted values", ylab="Residuals")
+    abline(h=0, col="red")
+  } else {
+    plot(residuals(model), type="l",
+         main=paste(model_name, "Residuals Plot"),
+         ylab="Residuals")
+  }
+  
+  # 2. ACF of Residuals
+  acf(residuals(model), main=paste(model_name, "ACF of Residuals"))
+  
+  # 3. Q-Q Plot
+  qqnorm(residuals(model), main=paste(model_name, "Q-Q Plot"))
+  qqline(residuals(model), col="red")
+}
+
+
+# Residual analysis for each model
+residual_analysis(fit_seasonal, "Seasonal Model")
+residual_analysis(fit_trend, "Seasonal+Trend Model")
+residual_analysis(fit_log, "Log-Transformed Model")
+residual_analysis(fit_harmonic, "Harmonic Model")
+
+# Residual analysis for Holt-Winters
+par(mfrow=c(2,2))
+plot(hw_model$fitted[,1] - hw_model$x, main="Holt-Winters Residuals Plot", type="l")
+acf(hw_model$fitted[,1] - hw_model$x, main="Holt-Winters ACF of Residuals")
+pacf(hw_model$fitted[,1] - hw_model$x, main="Holt-Winters PACF of Residuals")
+qqnorm(hw_model$fitted[,1] - hw_model$x, main="Holt-Winters Q-Q Plot")
+qqline(hw_model$fitted[,1] - hw_model$x, col="red")
+par(mfrow=c(1,1))
+
+
+
+```
+```{r}
+
+# Fixed Final Model Comparison Table (correcting the 'results' issue)
+calculate_metrics <- function(model, test_data, model_name) {
+  if(model_name == "Holt-Winters") {
+    pred <- predict(model, n.ahead=nrow(test_data))
+    actual <- test_data$Total
+  } else {
+    pred <- predict(model, newdata=test_data)
+    actual <- test_data$Total
+  }
+  
+  errors <- actual - pred
+  mape <- mean(abs(errors)/actual)*100
+  rmse <- sqrt(mean(errors^2))
+  mae <- mean(abs(errors))
+  
+  if(model_name %in% c("Seasonal", "Seasonal+Trend", "Harmonic")) {
+    r_squared <- summary(model)$r.squared
+  } else {
+    r_squared <- NA
+  }
+  
+  return(data.frame(
+    Model = model_name,
+    R_squared = r_squared,
+    MAPE = mape,
+    RMSE = rmse,
+    MAE = mae
+  ))
+}
+
+# Calculate metrics for each model
+metrics_list <- list(
+  calculate_metrics(fit_seasonal, test, "Seasonal"),
+  calculate_metrics(fit_trend, test, "Seasonal+Trend"),
+  calculate_metrics(fit_log, test, "Log-Transformed"),
+  calculate_metrics(fit_harmonic, test, "Harmonic"),
+  calculate_metrics(hw_model, test, "Holt-Winters")
+)
+
+# Add ARIMAX if it exists
+if(exists("arimax")) {
+  metrics_list[[6]] <- calculate_metrics(arimax, test, "ARIMAX")
+}
+
+# Combine all metrics
+final_results <- do.call(rbind, metrics_list)
+
+# Print ordered by MAPE
+final_results[order(final_results$MAPE),]
+
+```
+
+```{r}
+
+## Final Model comparison Table
+# Create comprehensive comparison
+final_results <- data.frame(
+  Model = c("Seasonal", "Seasonal+Trend", "Harmonic", "Holt-Winters", "ARIMAX"),
+  R_squared = c(summary(fit_seasonal)$r.squared,
+               summary(fit_trend)$r.squared,
+               summary(fit_harmonic)$r.squared,
+               NA,
+               NA),
+  MAPE = results[,"MAPE"],
+  RMSE = results[,"RMSE"],
+  MAE = results[,"MAE"]
+)
+
+print(final_results[order(final_results$MAPE),])
+
+```
+

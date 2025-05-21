@@ -1,0 +1,217 @@
+---
+title: "Final Project"
+author: "Chipo"
+date: "4/4/25"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+#========================================== Morocco Power Consumption Data Analysis =============
+
+#### 1. SETUP AND DATA LOADING
+
+# Set working directory
+setwd("~/GW/Time Series/Final Project")
+
+# install and load libraries
+install.packages("dplyr")
+install.packages("ggplot2")
+install.packages("forecast")
+
+library(dplyr)
+library(ggplot2)
+library(forecast)
+
+# load the data
+power <- read.csv("PowerConsumption.csv", header=TRUE)
+attach(power)
+head(power)
+
+# summary statistics
+summary(power)
+
+```
+
+
+```{r}
+
+# Convert DateTime to POSIXct
+power$DateTime <- as.POSIXct(power$DateTime, format="%m/%d/%Y %H:%M")
+
+# Extract time components using base R
+power$Hour <- as.numeric(format(power$DateTime, "%H"))
+power$Weekday <- weekdays(power$DateTime)
+power$Weekday <- factor(power$Weekday, 
+                       levels=c("Monday","Tuesday","Wednesday",
+                                "Thursday","Friday","Saturday","Sunday"))
+power$Month <- format(power$DateTime, "%B")
+power$Month <- factor(power$Month,
+                     levels=c("January","February","March",
+                              "April","May","June","July",
+                              "August","September","October",
+                              "November","December")) 
+
+power
+
+```
+
+```{r}
+
+# Create a time series object
+POWER <- ts(power$Total, start=2017, frequency=24)
+
+# Plot time series
+ts.plot(POWER, col = "blue", main = "Power Consumption Over Time")
+
+
+
+```
+```{r}
+
+# Bow plots by Hourly, Daily and Monthly Seasonality
+ts.plot(POWER, col="blue", main="Power Consumption Over Time")
+boxplot(Total ~ Weekday, data=power, col="lightblue", main="Weekly Patterns")
+boxplot(Total ~ Hour, data=power, col="lightblue", main="Hourly Patterns")
+boxplot(Total ~ Month, data=power, col="lightblue", main="Monthly Patterns")
+
+
+```
+
+```{r}
+par(mfrow=c(1,2))
+# Nonstationarity of the Original Series
+# ACF Analysis:
+acf(POWER, main="ACF of Original Series")
+# ACF Analysis:
+pacf(POWER, main="PACF of Original Series")
+
+```
+
+
+```{r}
+#### 5. MODELING FRAMEWORK
+
+# Training/Test Split 
+
+train <- power[1:7500, ]
+test <- power[7501:8736, ]
+
+# Deterministic Model (Lecture 3)
+
+# Seasonal model (month + hour)
+fit_seasonal <- lm(Total ~ as.factor(Hour) + as.factor(Month) , data=train)
+summary(fit_seasonal)
+
+```
+
+```{r}
+
+# Seasonal + Trend model
+time <- 1:nrow(train)
+fit_trend <- lm(Total ~ time + as.factor(Month) + as.factor(Hour), data=train)
+summary(fit_trend)
+
+```
+
+```{r}
+
+# Log-transformed model
+fit_log <- lm(log(Total) ~ time + as.factor(Month) + as.factor(Hour), data=train)
+summary(fit_log)
+
+```
+
+```{r}
+
+# Model comparison function
+compare_models <- function(model, test_data, log_transform=FALSE) {
+  pred <- predict(model, newdata=test_data)
+  if(log_transform) pred <- exp(pred)
+  mape <- mean(abs(test_data$Total - pred)/test_data$Total)*100
+  return(mape)
+}
+
+cat("Seasonal MAPE:", compare_models(fit_seasonal, test), "%\n")
+cat("Seasonal+Trend MAPE:", compare_models(fit_trend, test), "%\n")
+cat("Log Seasonal+Trend MAPE:", compare_models(fit_log, test, TRUE), "%\n")
+
+```
+
+```{r}
+
+#  Holt-Winters Exponential Smoothing (Improved)
+# Fit HW model
+hw_model <- HoltWinters(ts(train$Total, frequency=24))
+hw_model
+
+```
+
+```{r}
+
+# Plot fitted vs actual
+plot(hw_model, main="Holt-Winters Filtering")
+
+# Forecast and evaluate
+hw_forecast <- predict(hw_model, n.ahead=1236)
+hw_mape <- mean(abs(test$Total - hw_forecast)/test$Total)*100
+cat("HW MAPE:", hw_mape, "%\n")
+
+```
+
+```{r}
+
+# ARIMA with External Regressors
+# Prepare regressors
+xreg <- cbind(train$Temperature, train$Humidity, 
+              train$Wind.Speed, train$diffuse.flows, 
+              train$general.diffuse.flows)
+
+# Fit ARIMAX model
+arimax <- arima(train$Total, order=c(2,0,0), xreg=xreg)
+summary(arimax)
+
+```
+
+```{r}
+
+# Residual diagnostics
+par(mfrow=c(1,2))
+acf(arimax$residuals, main="ACF of ARIMAX Residuals")
+pacf(arimax$residuals, main="PACF of ARIMAX Residuals")
+
+# Forecast with test regressors
+xreg_test <- cbind(test$Temperature, test$Humidity, 
+                   test$Wind.Speed, test$diffuse.flows, 
+                   test$general.diffuse.flows)
+arimax_pred <- predict(arimax, n.ahead=1236, newxreg=xreg_test)$pred
+arimax_mape <- mean(abs(test$Total - arimax_pred)/test$Total)*100
+cat("ARIMAX MAPE:", arimax_mape, "%\n")
+
+```
+
+```{r}
+
+# Create comparison table
+results <- data.frame(
+  Model = c("Seasonal", "Seasonal+Trend", "Log Model", 
+            "Holt-Winters", "ARIMAX"),
+  MAPE = c(compare_models(fit_seasonal, test),
+           compare_models(fit_trend, test),
+           compare_models(fit_log, test, TRUE),
+           hw_mape,
+           arimax_mape)
+)
+
+# Print results
+print(results[order(results$MAPE), ])
+
+# Visual comparison
+barplot(results$MAPE, names.arg=results$Model, 
+        col=rainbow(nrow(results)), 
+        main="Model Performance Comparison (MAPE)",
+        ylab="MAPE (%)", las=2)
+
+```
+
